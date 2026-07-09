@@ -1,0 +1,57 @@
+name: Release GitHub Action
+
+on:
+  push:
+    tags:
+      # Full semver only (vX.Y.Z). This job force-pushes the moving `vX` /
+      # `vX.Y` tags at the end; matching only X.Y.Z stops those pushes from
+      # re-triggering this workflow — a bare `v1` re-trigger makes MAJOR==MINOR
+      # and fails with "dst ref refs/tags/v1 receives from more than one src".
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          fetch-depth: 0 # all tags, so the moving tags can be re-pointed
+
+      - name: Extract major and minor versions
+        id: version
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          MAJOR=$(echo "$TAG" | cut -d. -f1)    # vX
+          MINOR=$(echo "$TAG" | cut -d. -f1,2)  # vX.Y
+          echo "major=$MAJOR" >> "$GITHUB_OUTPUT"
+          echo "minor=$MINOR" >> "$GITHUB_OUTPUT"
+          echo "Releasing $TAG (moving tags: $MAJOR, $MINOR)"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Idempotent: skip if the release already exists (manual pre-release).
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists — skipping create."
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --title "$GITHUB_REF_NAME" \
+              --generate-notes
+          fi
+
+      - name: Advance moving major/minor tags
+        run: |
+          set -euo pipefail
+          git tag -f "${{ steps.version.outputs.major }}"
+          git tag -f "${{ steps.version.outputs.minor }}"
+          git push --force origin \
+            "${{ steps.version.outputs.major }}" \
+            "${{ steps.version.outputs.minor }}"
+          echo "Consumers on @${{ steps.version.outputs.major }} now get $GITHUB_REF_NAME."

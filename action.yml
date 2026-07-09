@@ -1,0 +1,167 @@
+name: Deploy to ComputeSphere
+description: >-
+  Deploy an app to ComputeSphere from a computesphere.yaml manifest (or a
+  prebuilt image) and wait for it to reach Running. Installs csph, deploys, and
+  surfaces the deployment id, URL, and status as outputs.
+author: ComputeSphere
+branding:
+  icon: upload-cloud
+  color: blue
+
+inputs:
+  token:
+    description: >-
+      ComputeSphere API token used to authenticate `csph`. A project-scoped
+      `csph_` token is recommended. It is masked and exported as
+      COMPUTESPHERE_API_TOKEN by the install step — never interpolated into a
+      shell command.
+    required: true
+  version:
+    description: >-
+      csph version to install (e.g. "0.12.2"). Defaults to "latest"; pin a
+      concrete version for reproducible pipelines.
+    required: false
+    default: latest
+  file:
+    description: >-
+      Path to the computesphere.yaml manifest to deploy (relative to
+      working-directory). Ignored when `image` is set.
+    required: false
+    default: computesphere.yaml
+  image:
+    description: >-
+      A prebuilt image reference to deploy as a one-service web app instead of a
+      manifest. Prefer an immutable digest (e.g.
+      ghcr.io/org/app@sha256:…) so a preview and production are provably the
+      same artifact.
+    required: false
+    default: ""
+  name:
+    description: Service name when deploying with `image`. Defaults to a name derived from the image.
+    required: false
+    default: ""
+  port:
+    description: Container port for the `image` service.
+    required: false
+    default: "8080"
+  project:
+    description: Target project ID. Falls back to the token's default when unset.
+    required: false
+    default: ""
+  environment:
+    description: Target environment ID. Falls back to the account default when unset.
+    required: false
+    default: ""
+  atomic:
+    description: Roll every resource back if any fails (all-or-nothing).
+    required: false
+    default: "false"
+  wait-timeout:
+    description: >-
+      How long to wait for the deployment to reach Running, as a Go duration
+      (e.g. "5m", "90s").
+    required: false
+    default: 5m
+  no-wait:
+    description: >-
+      Return as soon as resources are accepted; don't wait for Running. NOT
+      recommended in CI — the job then can't reflect whether the deploy became
+      healthy.
+    required: false
+    default: "false"
+  working-directory:
+    description: Directory to run the deploy in (where the manifest lives).
+    required: false
+    default: "."
+
+outputs:
+  deployment-id:
+    description: >-
+      Deployment ID of the single deployed/updated service. Empty for a
+      multi-service manifest apply.
+    value: ${{ steps.deploy.outputs.deployment-id }}
+  service-url:
+    description: Public URL of the deployed service (empty when not resolvable).
+    value: ${{ steps.deploy.outputs.service-url }}
+  status:
+    description: Apply outcome for the service — created, updated, or unchanged.
+    value: ${{ steps.deploy.outputs.status }}
+  result:
+    description: The full `csph deploy --output json` result document.
+    value: ${{ steps.deploy.outputs.result }}
+
+runs:
+  using: composite
+  steps:
+    # Install + authenticate. setup-csph masks the token and exports it as
+    # COMPUTESPHERE_API_TOKEN, so the deploy step never sees the raw secret in a
+    # `run:` — composite-action inputs are not auto-masked.
+    - name: Install csph
+      uses: computesphere/setup-csph@v1
+      with:
+        version: ${{ inputs.version }}
+        token: ${{ inputs.token }}
+
+    - name: Deploy
+      id: deploy
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      # User inputs are mapped into env and referenced as quoted "$VARS" — never
+      # interpolated into the command string — so a value can't inject shell.
+      env:
+        IN_FILE: ${{ inputs.file }}
+        IN_IMAGE: ${{ inputs.image }}
+        IN_NAME: ${{ inputs.name }}
+        IN_PORT: ${{ inputs.port }}
+        IN_PROJECT: ${{ inputs.project }}
+        IN_ENVIRONMENT: ${{ inputs.environment }}
+        IN_ATOMIC: ${{ inputs.atomic }}
+        IN_WAIT_TIMEOUT: ${{ inputs.wait-timeout }}
+        IN_NO_WAIT: ${{ inputs.no-wait }}
+      run: |
+        set -euo pipefail
+
+        args=(deploy --output json)
+        if [ -n "$IN_IMAGE" ]; then
+          args+=(--image "$IN_IMAGE")
+          [ -n "$IN_NAME" ] && args+=(--name "$IN_NAME")
+          [ -n "$IN_PORT" ] && args+=(--port "$IN_PORT")
+        else
+          args+=(--file "$IN_FILE")
+        fi
+        [ -n "$IN_PROJECT" ]      && args+=(--project "$IN_PROJECT")
+        [ -n "$IN_ENVIRONMENT" ]  && args+=(--environment "$IN_ENVIRONMENT")
+        [ "$IN_ATOMIC" = "true" ] && args+=(--atomic)
+        [ -n "$IN_WAIT_TIMEOUT" ] && args+=(--wait-timeout "$IN_WAIT_TIMEOUT")
+        [ "$IN_NO_WAIT" = "true" ] && args+=(--no-wait)
+
+        echo "csph ${args[*]}"
+
+        # csph deploy prints the JSON result to stdout and progress/health to
+        # stderr, and exits non-zero if the deployment doesn't reach Running.
+        # Capture stdout but preserve the exit code so the step still fails on an
+        # unhealthy deploy.
+        set +e
+        OUT="$(csph "${args[@]}")"
+        CODE=$?
+        set -e
+        printf '%s\n' "$OUT"
+
+        # Isolate the JSON object (first line starting with `{` through the first
+        # line starting with `}`) so a trailing human "✓ … is Running" line on
+        # stdout can't break the parse.
+        JSON="$(printf '%s\n' "$OUT" | awk '/^\{/{f=1} f{print} /^\}/{if(f){exit}}')"
+        if printf '%s' "$JSON" | jq -e . >/dev/null 2>&1; then
+          {
+            echo "deployment-id=$(printf '%s' "$JSON" | jq -r '.deployment_id // ""')"
+            echo "service-url=$(printf '%s' "$JSON"   | jq -r '.service_url // ""')"
+            echo "status=$(printf '%s' "$JSON"        | jq -r '.resource_status // .status // ""')"
+            echo "result<<__CSPH_RESULT_EOF__"
+            printf '%s\n' "$JSON"
+            echo "__CSPH_RESULT_EOF__"
+          } >> "$GITHUB_OUTPUT"
+        else
+          echo "::warning::could not parse a JSON result from csph deploy; outputs will be empty"
+        fi
+
+        exit $CODE

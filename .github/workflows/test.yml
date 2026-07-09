@@ -1,0 +1,125 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # Validate action.yml structure without executing it.
+  metadata:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - name: action.yml is well-formed
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import sys, yaml
+          a = yaml.safe_load(open("action.yml"))
+          assert a.get("runs", {}).get("using") == "composite", "must be a composite action"
+          assert "token" in a["inputs"], "token input required"
+          assert a["inputs"]["token"]["required"] is True, "token must be required"
+          for o in ("deployment-id", "service-url", "status", "result"):
+              assert o in a["outputs"], f"missing output {o}"
+          # The install step must delegate auth to setup-csph (token never in a run:).
+          steps = a["runs"]["steps"]
+          assert any("setup-csph" in str(s.get("uses", "")) for s in steps), "must use setup-csph"
+          print("action.yml OK")
+          PY
+
+  # Lint the composite action's shell (the Deploy step's bash is the main risk).
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - name: Extract + shellcheck the Deploy step script
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' > /tmp/deploy-step.sh
+          import yaml
+          a = yaml.safe_load(open("action.yml"))
+          run = next(s["run"] for s in a["runs"]["steps"] if s.get("id") == "deploy")
+          print("#!/usr/bin/env bash")
+          print(run)
+          PY
+          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          # SC2086 etc.: the script quotes every expansion; assert it's clean.
+          shellcheck -S warning /tmp/deploy-step.sh
+
+  # Test the JSON-extraction logic in isolation: csph prints the JSON result and
+  # then a human "✓ … is running" line on stdout, so the action isolates the
+  # leading JSON object before parsing. This fixture reproduces that shape.
+  parse:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Extract outputs from a realistic csph deploy stdout
+        run: |
+          set -euo pipefail
+          OUT="$(cat <<'EOF'
+          {
+            "status": "success",
+            "deployment_id": "5a009a27-ec39-4441-886c-43795536b5bc",
+            "service": "api",
+            "service_url": "https://silver-cobra.computesphere.app",
+            "resource_status": "updated",
+            "environment": "15ae1ecb-d1ae-49d5-80b2-59db10c4c264",
+            "resources": [
+              {"name":"api","type":"web-service","status":"updated","deployment_id":"5a009a27-ec39-4441-886c-43795536b5bc","url":"https://silver-cobra.computesphere.app","environment":"15ae1ecb-d1ae-49d5-80b2-59db10c4c264"}
+            ]
+          }
+          ✓ deployment 5a009a27-ec39-4441-886c-43795536b5bc is Running
+          EOF
+          )"
+          JSON="$(printf '%s\n' "$OUT" | awk '/^\{/{f=1} f{print} /^\}/{if(f){exit}}')"
+          printf '%s' "$JSON" | jq -e . >/dev/null
+          DID=$(printf '%s' "$JSON" | jq -r '.deployment_id // ""')
+          URL=$(printf '%s' "$JSON" | jq -r '.service_url // ""')
+          ST=$(printf '%s' "$JSON"  | jq -r '.resource_status // .status // ""')
+          echo "deployment-id=$DID  service-url=$URL  status=$ST"
+          [ "$DID" = "5a009a27-ec39-4441-886c-43795536b5bc" ] || { echo "bad deployment-id"; exit 1; }
+          [ "$URL" = "https://silver-cobra.computesphere.app" ] || { echo "bad service-url"; exit 1; }
+          [ "$ST" = "updated" ] || { echo "bad status"; exit 1; }
+
+  # Full live deploy. Gated on the org secret so forks / unconfigured repos skip
+  # it instead of failing. Deploys a public image to a disposable test service.
+  live:
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'pull_request' }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - name: Skip when unconfigured
+        id: gate
+        env:
+          TOKEN: ${{ secrets.COMPUTESPHERE_API_TOKEN }}
+          ENV_ID: ${{ vars.COMPUTESPHERE_TEST_ENV_ID }}
+          PROJECT_ID: ${{ vars.COMPUTESPHERE_TEST_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "$TOKEN" ] || [ -z "$ENV_ID" ] || [ -z "$PROJECT_ID" ]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::live deploy test skipped — set COMPUTESPHERE_API_TOKEN secret + COMPUTESPHERE_TEST_ENV_ID/PROJECT_ID vars to enable"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Deploy a public image
+        if: steps.gate.outputs.run == 'true'
+        id: deploy
+        uses: ./
+        with:
+          token: ${{ secrets.COMPUTESPHERE_API_TOKEN }}
+          image: nginx:1.27-alpine
+          name: deploy-action-ci
+          project: ${{ vars.COMPUTESPHERE_TEST_PROJECT_ID }}
+          environment: ${{ vars.COMPUTESPHERE_TEST_ENV_ID }}
+          wait-timeout: 5m
+      - name: Assert outputs
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          set -euo pipefail
+          echo "id=${{ steps.deploy.outputs.deployment-id }} url=${{ steps.deploy.outputs.service-url }} status=${{ steps.deploy.outputs.status }}"
+          [ -n "${{ steps.deploy.outputs.deployment-id }}" ] || { echo "empty deployment-id"; exit 1; }

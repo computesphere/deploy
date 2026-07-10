@@ -97,7 +97,13 @@ runs:
     # COMPUTESPHERE_API_TOKEN, so the deploy step never sees the raw secret in a
     # `run:` — composite-action inputs are not auto-masked.
     - name: Install csph
-      uses: computesphere/setup-csph@v1
+      # Pinned to a full SHA (not the moving @v1) so a consumer who pins
+      # computesphere/deploy@<sha> gets a genuinely frozen, self-contained
+      # toolchain — the "provably what you built" promise below holds
+      # transitively. Bumped by an automation PR that requires human approval
+      # (a repo compromise that can move setup-csph could also make the deploy
+      # smoke test pass, so green ≠ authentic until release provenance lands).
+      uses: computesphere/setup-csph@c1c75ff469d03b43921fdf0fb0bbc5df249939e8 # v1.0.1
       with:
         version: ${{ inputs.version }}
         token: ${{ inputs.token }}

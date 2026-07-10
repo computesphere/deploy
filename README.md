@@ -9,6 +9,12 @@ It installs the `csph` CLI (via [`computesphere/setup-csph`](https://github.com/
 runs `csph deploy`, and surfaces the deployment id, URL, and status as action
 outputs.
 
+> **You don't add a `setup-csph` step yourself** — this action installs and
+> authenticates `csph` for you. Control the CLI version with the `version` input.
+> If you'd rather run `csph` directly (e.g. several `csph` commands in one job),
+> use [`setup-csph`](https://github.com/computesphere/setup-csph) once and call
+> `run: csph deploy …` — see [Do I need setup-csph?](#do-i-need-setup-csph) below.
+
 ```yaml
 - uses: computesphere/deploy@v1
   with:
@@ -108,6 +114,35 @@ non-zero if it doesn't within `wait-timeout` — a zero-downtime redeploy is
 followed to its new version's outcome, so a broken image fails the job instead
 of silently reporting success. Pass `no-wait: true` to opt out (the deploy still
 starts server-side; the job just won't reflect its health).
+
+## Do I need setup-csph?
+
+**No — not with this action.** `computesphere/deploy` installs and authenticates
+`csph` internally (it runs `computesphere/setup-csph` for you), so a single step
+is all you need:
+
+```yaml
+- uses: computesphere/deploy@v1
+  with:
+    token: ${{ secrets.COMPUTESPHERE_API_TOKEN }}
+    version: 0.12.3        # optional — pin the csph CLI version
+    environment: ${{ vars.COMPUTESPHERE_ENV_ID }}
+```
+
+Reach for [`setup-csph`](https://github.com/computesphere/setup-csph) directly
+only when you want to drive `csph` yourself — for example running several `csph`
+commands in one job, or scripting a flow this action doesn't cover:
+
+```yaml
+- uses: computesphere/setup-csph@v1
+  with:
+    token: ${{ secrets.COMPUTESPHERE_API_TOKEN }}
+- run: csph deploy --file computesphere.yaml --environment "$ENV_ID" --output json
+- run: csph deployment logs "$DEPLOYMENT_ID" --kind runtime --tail 50
+```
+
+The two are consistent: `computesphere/deploy` is exactly `setup-csph` + a
+hardened `csph deploy` call with parsed outputs.
 
 ## Versioning & pinning
 

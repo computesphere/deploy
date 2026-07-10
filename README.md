@@ -158,6 +158,11 @@ Or pin to a full-length commit SHA for a hardened supply chain:
 - uses: computesphere/deploy@<40-char-sha>  # v1.0.0
 ```
 
+Pinning `deploy@<sha>` freezes the whole toolchain: this action pins its own
+`setup-csph` dependency to a SHA (not a moving tag), so a pinned deploy is
+genuinely self-contained and reproducible — no transitive drift. Dependency
+bumps land via a review-required PR (never blind auto-merge).
+
 ## Security
 
 - The `token` is passed to `setup-csph`, which masks it (`::add-mask::`) and

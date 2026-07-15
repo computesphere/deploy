@@ -1,8 +1,5 @@
 name: Deploy to ComputeSphere
-description: >-
-  Deploy an app to ComputeSphere from a computesphere.yaml manifest (or a
-  prebuilt image) and wait for it to reach Running. Installs csph, deploys, and
-  surfaces the deployment id, URL, and status as outputs.
+description: Deploy an app to ComputeSphere from a computesphere.yaml manifest or prebuilt image, and wait for it to reach Running.
 author: ComputeSphere
 branding:
   icon: upload-cloud

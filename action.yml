@@ -41,6 +41,32 @@ inputs:
     description: Container port for the `image` service.
     required: false
     default: "8080"
+  registry-username:
+    description: >-
+      Username for the private registry hosting `image`. Only applies with
+      `image`.
+    required: false
+    default: ""
+  registry-password:
+    description: >-
+      Password or access token for the private registry hosting `image`. Only
+      applies with `image`. This is a secret — pass a repository or environment
+      secret (e.g. `${{ secrets.REGISTRY_PASSWORD }}`), never a literal. The
+      deploy step masks it (`::add-mask::`) before use.
+    required: false
+    default: ""
+  registry-url:
+    description: >-
+      Registry server URL for private-registry auth (e.g. `ghcr.io`). Only
+      applies with `image`; defaults to the registry in the image reference.
+    required: false
+    default: ""
+  image-provider:
+    description: >-
+      Registry provider hint for private-registry auth (e.g. `ghcr`,
+      `dockerhub`, `acr`). Only applies with `image`.
+    required: false
+    default: ""
   project:
     description: Target project ID. Falls back to the token's default when unset.
     required: false
@@ -116,6 +142,10 @@ runs:
         IN_IMAGE: ${{ inputs.image }}
         IN_NAME: ${{ inputs.name }}
         IN_PORT: ${{ inputs.port }}
+        IN_REGISTRY_USERNAME: ${{ inputs.registry-username }}
+        IN_REGISTRY_PASSWORD: ${{ inputs.registry-password }}
+        IN_REGISTRY_URL: ${{ inputs.registry-url }}
+        IN_IMAGE_PROVIDER: ${{ inputs.image-provider }}
         IN_PROJECT: ${{ inputs.project }}
         IN_ENVIRONMENT: ${{ inputs.environment }}
         IN_ATOMIC: ${{ inputs.atomic }}
@@ -124,11 +154,19 @@ runs:
       run: |
         set -euo pipefail
 
+        # setup-csph masks the API token, but the registry password arrives via
+        # this step's own env — mask it here before anything can echo it.
+        [ -n "$IN_REGISTRY_PASSWORD" ] && echo "::add-mask::$IN_REGISTRY_PASSWORD"
+
         args=(deploy --output json)
         if [ -n "$IN_IMAGE" ]; then
           args+=(--image "$IN_IMAGE")
           [ -n "$IN_NAME" ] && args+=(--name "$IN_NAME")
           [ -n "$IN_PORT" ] && args+=(--port "$IN_PORT")
+          [ -n "$IN_REGISTRY_USERNAME" ] && args+=(--registry-username "$IN_REGISTRY_USERNAME")
+          [ -n "$IN_REGISTRY_PASSWORD" ] && args+=(--registry-password "$IN_REGISTRY_PASSWORD")
+          [ -n "$IN_REGISTRY_URL" ]      && args+=(--registry-url "$IN_REGISTRY_URL")
+          [ -n "$IN_IMAGE_PROVIDER" ]    && args+=(--image-provider "$IN_IMAGE_PROVIDER")
         else
           args+=(--file "$IN_FILE")
         fi

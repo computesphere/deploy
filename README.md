@@ -71,6 +71,24 @@ jobs:
       - run: echo "Deployed ${{ steps.deploy.outputs.service-url }}"
 ```
 
+### Deploy a private-registry image
+
+For an image that requires authentication, pass registry credentials. Store the
+password/token as a repository or environment **secret** — the action masks it
+before use.
+
+```yaml
+- uses: computesphere/deploy@v1
+  with:
+    token: ${{ secrets.COMPUTESPHERE_API_TOKEN }}
+    image: ghcr.io/${{ github.repository }}@${{ steps.build.outputs.digest }}
+    name: api
+    registry-username: ${{ github.actor }}
+    registry-password: ${{ secrets.GHCR_PULL_TOKEN }}
+    image-provider: ghcr
+    environment: ${{ vars.COMPUTESPHERE_ENV_ID }}
+```
+
 ## Inputs
 
 | Input | Required | Default | Description |
@@ -81,6 +99,10 @@ jobs:
 | `image` | no | | A prebuilt image to deploy as a one-service web app instead of a manifest. Prefer an immutable digest. |
 | `name` | no | | Service name when deploying with `image` (defaults to a name derived from the image). |
 | `port` | no | `8080` | Container port for the `image` service. |
+| `registry-username` | no | | Username for the private registry hosting `image`. Only applies with `image`. |
+| `registry-password` | no | | Password or access token for the private registry. Only applies with `image`. **Secret** — pass a repository/environment secret; the action masks it. |
+| `registry-url` | no | | Registry server URL (e.g. `ghcr.io`). Only applies with `image`; defaults to the registry in the image reference. |
+| `image-provider` | no | | Registry provider hint (e.g. `ghcr`, `dockerhub`, `acr`). Only applies with `image`. |
 | `project` | no | | Target project ID. Falls back to the token's default. |
 | `environment` | no | | Target environment ID. |
 | `atomic` | no | `false` | Roll every resource back if any fails (all-or-nothing). |
@@ -168,6 +190,9 @@ bumps land via a review-required PR (never blind auto-merge).
 - The `token` is passed to `setup-csph`, which masks it (`::add-mask::`) and
   exports it as an environment variable. It is **never** interpolated into a
   `run:` command.
+- `registry-password` is masked (`::add-mask::`) by the deploy step before any
+  command is echoed or run. Still, always source it from a repository or
+  environment secret — never a workflow literal.
 - All user inputs are mapped into step `env:` and referenced as quoted `"$VARS"`
   — never spliced into the command string — so a value can't inject shell.
 - Deploy by immutable **digest** and enable `provenance`/`sbom` on your build so

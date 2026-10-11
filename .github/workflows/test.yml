@@ -63,16 +63,16 @@ jobs:
           OUT="$(cat <<'EOF'
           {
             "status": "success",
-            "deployment_id": "5a009a27-ec39-4441-886c-43795536b5bc",
+            "deployment_id": "00000000-0000-4000-8000-000000000001",
             "service": "api",
-            "service_url": "https://silver-cobra.computesphere.app",
+            "service_url": "https://my-service.example.com",
             "resource_status": "updated",
-            "environment": "15ae1ecb-d1ae-49d5-80b2-59db10c4c264",
+            "environment": "00000000-0000-4000-8000-000000000002",
             "resources": [
-              {"name":"api","type":"web-service","status":"updated","deployment_id":"5a009a27-ec39-4441-886c-43795536b5bc","url":"https://silver-cobra.computesphere.app","environment":"15ae1ecb-d1ae-49d5-80b2-59db10c4c264"}
+              {"name":"api","type":"web-service","status":"updated","deployment_id":"00000000-0000-4000-8000-000000000001","url":"https://my-service.example.com","environment":"00000000-0000-4000-8000-000000000002"}
             ]
           }
-          ✓ deployment 5a009a27-ec39-4441-886c-43795536b5bc is Running
+          ✓ deployment 00000000-0000-4000-8000-000000000001 is Running
           EOF
           )"
           JSON="$(printf '%s\n' "$OUT" | awk '/^\{/{f=1} f{print} /^\}/{if(f){exit}}')"
@@ -81,8 +81,8 @@ jobs:
           URL=$(printf '%s' "$JSON" | jq -r '.service_url // ""')
           ST=$(printf '%s' "$JSON"  | jq -r '.resource_status // .status // ""')
           echo "deployment-id=$DID  service-url=$URL  status=$ST"
-          [ "$DID" = "5a009a27-ec39-4441-886c-43795536b5bc" ] || { echo "bad deployment-id"; exit 1; }
-          [ "$URL" = "https://silver-cobra.computesphere.app" ] || { echo "bad service-url"; exit 1; }
+          [ "$DID" = "00000000-0000-4000-8000-000000000001" ] || { echo "bad deployment-id"; exit 1; }
+          [ "$URL" = "https://my-service.example.com" ] || { echo "bad service-url"; exit 1; }
           [ "$ST" = "updated" ] || { echo "bad status"; exit 1; }
 
   # Full live deploy. Gated on the org secret so forks / unconfigured repos skip
